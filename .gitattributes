@@ -1,0 +1,7 @@
+# Normalize line endings: the CI matrix runs Linux too, and a CRLF .mjs file is
+# harmless but a CRLF shell script would not be.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary

@@ -1,0 +1,7 @@
+node_modules/
+*.log
+*.bak-*
+session-index.json
+.dsh-memory/
+.DS_Store
+Thumbs.db

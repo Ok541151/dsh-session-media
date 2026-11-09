@@ -1,0 +1,6 @@
+# dsh-memory bundle patch: one insert registering the plugin row.
+# The plugin registers a system-prompt section whose text is read from a
+# memory file on every turn, giving cross-session continuity.
+- insert:
+    - id: dsh-session-media
+      name: 'dsh-session-media'
