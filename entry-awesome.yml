@@ -1,0 +1,26 @@
+# 提交到 awesome-dsh-plugin 仓库
+# 路径必须是: data/plugins/Ok541151__dsh-session-media.yml
+#
+# 规则（来自 contributing.md，2026-11-09 拉取）：
+#   - 一个 PR 只加这一个文件，不改生成的 README
+#   - 只有 description.en 必填；zh 可不写
+#   - 描述不得含营销词/最高级，须与代码一致
+#   - 仓库需满 1 天、声明 dsh.bundle、加 dsh-plugin topic
+
+url: https://github.com/Ok541151/dsh-session-media
+name: dsh-session-media
+category: session
+
+description:
+  en: >-
+    Session-archive layer for DSH. It injects one per-workspace Markdown file into the system
+    prompt on every turn, searches past session transcripts with AND keywords, an optional time
+    window and a workspace filter, and recovers the images and documents those past sessions
+    carried by returning their original local paths or copying them to a chosen directory. It
+    also reports index health: version, entry count, cache usage, frequent sessions and sessions
+    stored in an archive format it does not recognise. Keyword search only, no embedding service.
+  zh: >-
+    DSH 的会话档案层。每轮把一个按工作区定位的 Markdown 记忆文件注入系统提示；跨历史会话检索
+    对话原文，支持多关键词 AND、时间窗与工作区过滤；还能取出历史会话携带的图片和文档，给出原始
+    本地路径或批量复制到指定目录。另外提供体检：索引版本、条目数、缓存占用、高频会话，以及未知
+    归档格式的告警。仅关键词检索，不依赖向量服务。

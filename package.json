@@ -40,5 +40,13 @@
                     "test":  "node selftest.mjs",
                     "test:fast":  "node selftest.mjs --no-evict"
                 },
-    "license":  "MIT"
+    "license":  "MIT",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/Ok541151/dsh-session-media.git"
+                   },
+    "homepage":  "https://github.com/Ok541151/dsh-session-media#readme",
+    "bugs":  {
+                 "url":  "https://github.com/Ok541151/dsh-session-media/issues"
+             }
 }
