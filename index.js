@@ -1098,7 +1098,7 @@ export function apply(ctx, config = {}) {
             .slice(0, topN)
 
           // --- memory file ---
-          let resolvedDir = '', memFile = '', memChars = 0, memMtime = ''
+          let resolvedDir = '', memFile = '', memChars = 0, memMtime = '', memMtimeMs = 0
           try {
             resolvedDir = process.env.DSH_MEMORY_DIR || detectWorkspaceDir() || ''
             for (const n of ['环境笔记.md', 'MEMORY.md', 'CLAUDE.md']) {
@@ -1107,7 +1107,8 @@ export function apply(ctx, config = {}) {
                 memFile = n
                 const t = readFileSync(p, 'utf8')
                 memChars = t.length
-                memMtime = iso(statSync(p).mtimeMs)
+                memMtimeMs = statSync(p).mtimeMs
+                memMtime = iso(memMtimeMs)
                 break
               }
             }
@@ -1115,6 +1116,18 @@ export function apply(ctx, config = {}) {
           if (!resolvedDir) warnings.push('未能探测当前工作区：记忆段不会注册')
           else if (!memFile) warnings.push(`工作区 ${resolvedDir} 下没找到 环境笔记.md / MEMORY.md / CLAUDE.md`)
           if (memChars > 12000) warnings.push(`记忆文件 ${memChars} 字符，超过 maxChars=12000，会被「保头保尾」截断`)
+
+          // The plugin only stores what someone explicitly writes down, so its
+          // failure mode is silence: sessions keep happening and the lessons keep
+          // being lost. Compare the memory file's mtime against the newest session.
+          if (memMtimeMs && newest > memMtimeMs) {
+            const gapDays = Math.floor((newest - memMtimeMs) / 86400000)
+            let newer = 0
+            for (const [, v] of textCache) if ((v.mtime || 0) > memMtimeMs) newer++
+            if (newer >= 3 && gapDays >= 1) {
+              warnings.push(`记忆文件已 ${gapDays} 天未更新，期间有 ${newer} 个会话——踩过的坑可能没记下来`)
+            }
+          }
 
           // --- archives on disk ---
           let sessions = 0, totalMB = 0, unknownFormat = 0
