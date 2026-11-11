@@ -73,6 +73,23 @@ try {
     return `${t.length} 字符`
   })
 
+  run('发布的文件不带 UTF-8 BOM', () => {
+    // DSH reads a plugin manifest with JSON.parse(readFileSync(path, "utf8")), and
+    // JSON.parse keeps a leading U+FEFF — so a BOM'd package.json parses to nothing
+    // and the plugin silently never loads. Windows PowerShell 5.1 writes a BOM for
+    // `Set-Content -Encoding UTF8` and `Out-File -Encoding utf8`; this guard is the
+    // reason that can never ship again.
+    const files = ['index.js', 'package.json', 'cordis.patch.yml', 'README.md', 'README.en.md', 'LICENSE']
+    for (const f of files) {
+      const buf = readFileSync(new URL('./' + f, import.meta.url))
+      if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+        throw new Error(`${f} starts with a UTF-8 BOM`)
+      }
+    }
+    JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
+    return `${files.length} 个文件无 BOM，package.json 可解析`
+  })
+
   run('工具定义结构完整', () => {
     for (const t of tools) {
       assert(typeof t.name === 'string' && t.name, '缺 name')
