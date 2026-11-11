@@ -1042,6 +1042,10 @@ export function apply(ctx, config = {}) {
           const warnings = []
           const file = indexPath()
           const repaired = []
+          // Must run BEFORE the file checks: loadIndex() is what migrates a legacy
+          // index into the current path. Checking first reported "index missing"
+          // on the first call after the rename even though the data was there.
+          loadIndex()
 
           if (args?.fix) {
             // 1) counters for sessions that no longer exist
@@ -1086,7 +1090,6 @@ export function apply(ctx, config = {}) {
           }
 
           // --- cache ---
-          loadIndex()
           const entries = textCache.size
           const usage = cacheMaxEntries > 0 ? Number(((entries / cacheMaxEntries) * 100).toFixed(1)) : 0
           if (entries >= cacheMaxEntries) warnings.push('缓存已达条数上限，淘汰会开始生效')
