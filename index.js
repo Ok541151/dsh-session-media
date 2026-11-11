@@ -1,5 +1,5 @@
 /**
- * dsh-memory — cross-session memory for DSH.
+ * dsh-session-media — session-archive layer for DSH.
  *
  * Two halves, both about "what does the model know across sessions":
  *
@@ -29,10 +29,10 @@
  * runtime. The import is therefore dynamic and optional: if it fails we fall
  * back to an identity function, because a tool definition is a plain object.
  *
- * @module dsh-memory
+ * @module dsh-session-media
  */
 
-import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, copyFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, copyFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import zlib from 'node:zlib'
@@ -124,7 +124,7 @@ function readMemory(cfg) {
   }
 
   const lines = [
-    '# 长期记忆（dsh-memory 自动注入）',
+    '# 长期记忆（dsh-session-media 自动注入）',
     '',
     '以下内容来自用户工作区的记忆文件，跨会话有效。它描述的是环境与偏好，不是任务本身；若与本轮对话冲突，以本轮对话为准。',
   ]
@@ -529,7 +529,23 @@ function evictOverflow() {
  */
 function indexPath() {
   const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
-  return path.join(appData, 'dsh-desktop', 'harness', 'dsh-memory', 'session-index.json')
+  return path.join(appData, 'dsh-desktop', 'harness', 'dsh-session-media', 'session-index.json')
+}
+
+/**
+ * The plugin shipped as `dsh-memory` before it was published. Carry an existing
+ * index across instead of making the first search rebuild it (~12 s) and drop
+ * the accumulated use counters. A failed migration only costs that rebuild.
+ */
+function migrateLegacyIndex() {
+  try {
+    const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
+    const legacy = path.join(appData, 'dsh-desktop', 'harness', 'dsh-memory', 'session-index.json')
+    const current = indexPath()
+    if (!existsSync(legacy) || existsSync(current)) return
+    mkdirSync(path.dirname(current), { recursive: true })
+    try { renameSync(legacy, current) } catch { copyFileSync(legacy, current) }
+  } catch { /* ignore */ }
 }
 
 /**
@@ -538,6 +554,7 @@ function indexPath() {
  * with an empty cache and rebuild it from the archives.
  */
 function loadIndex() {
+  migrateLegacyIndex()
   if (indexStarted) return
   indexStarted = true
   try {
@@ -742,7 +759,7 @@ export function apply(ctx, config = {}) {
           try { if (typeof dispose === 'function') dispose() } catch { /* ignore */ }
           dispose = null
         }
-      }, 'dsh-memory: prompt section')
+      }, 'dsh-session-media: prompt section')
     }
 
     // --- 2. session tools ---
@@ -1163,7 +1180,7 @@ export function apply(ctx, config = {}) {
         for (const d of disposers) { try { if (typeof d === 'function') d() } catch { /* ignore */ } }
         disposers.length = 0
       }
-    }, 'dsh-memory: session tools')
+    }, 'dsh-session-media: session tools')
   } catch {
     // Never throw out of apply().
   }
