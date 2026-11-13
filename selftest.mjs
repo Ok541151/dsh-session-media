@@ -12,7 +12,7 @@ import path from 'node:path'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.join(HERE, 'index.js')
-const IDX = path.join(process.env.APPDATA || '', 'dsh-desktop', 'harness', 'dsh-memory', 'session-index.json')
+const IDX = path.join(process.env.APPDATA || '', 'dsh-desktop', 'harness', 'dsh-session-media', 'session-index.json')
 const SKIP_EVICT = process.argv.includes('--no-evict')
 
 const results = []
@@ -41,7 +41,7 @@ const m = await import('./index.js')
 
 // ---------------------------------------------------------------------------
 await check('导出 name / inject / apply', () => {
-  assert(m.name === 'dsh-memory', `name=${m.name}`)
+  assert(m.name === 'dsh-session-media', `name=${m.name}`)
   assert(Array.isArray(m.inject), 'inject 不是数组')
   assert(m.inject.includes('systemPrompt') && m.inject.includes('tools'), `inject=${m.inject.join(',')}`)
   assert(typeof m.apply === 'function', 'apply 不是函数')
@@ -106,14 +106,16 @@ await check('memory_doctor 无告警', async () => {
   const r = await T('memory_doctor').execute({ top: 3 })
   assert(r.ok, 'ok=false')
   assert(Array.isArray(r.warnings), 'warnings 不是数组')
-  assert(r.warnings.length === 0, `告警: ${r.warnings.join(' | ')}`)
+  // The staleness nudge is by design, so only that one is acceptable here.
+  const unexpected = r.warnings.filter((w) => !w.includes('记忆文件已'))
+  assert(unexpected.length === 0, `非预期告警: ${unexpected.join(' | ')}`)
   return `v${r.index.version}, ${r.index.entries} 条, ${r.index.sizeMB} MB`
 })
 
-await check('索引存在且版本为 4（含 counters）', () => {
+await check('索引存在且版本为 5（含 counters）', () => {
   assert(existsSync(IDX), '索引不存在')
   const j = JSON.parse(readFileSync(IDX, 'utf8'))
-  assert(j.version === 4, `version=${j.version}`)
+  assert(j.version === 5, `version=${j.version}`)
   assert(j.entries && typeof j.entries === 'object', '缺 entries')
   assert(j.counters && typeof j.counters === 'object', '缺 counters')
   return `${Object.keys(j.entries).length} 条 / ${Object.keys(j.counters).length} 计数器`
@@ -205,7 +207,7 @@ if (!SKIP_EVICT) {
         e.lastUsed = e.mtime
         out[k] = e
       })
-      writeFileSync(IDX, JSON.stringify({ version: 4, entries: out, counters: {} }))
+      writeFileSync(IDX, JSON.stringify({ version: 5, entries: out, counters: {} }))
 
       // Module state is process-wide, so the crafted index is only seen after a reset.
       m.__testReset()
