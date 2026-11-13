@@ -657,6 +657,28 @@ function saveIndex(dirs) {
   }
 }
 
+/**
+ * Everything one session can be matched against, lowercased once and cached.
+ *
+ * Rebuilding this per search meant lowercasing every message of every scanned
+ * session on every call — warm searches cost ~65 ms almost entirely here. The
+ * WeakMap keeps the cache off the persisted entry (a property would be written
+ * to disk and roughly double the index) and lets it disappear when an entry is
+ * evicted.
+ */
+const hayCache = new WeakMap()
+
+function haystackOf(digest) {
+  let hay = hayCache.get(digest)
+  if (hay === undefined) {
+    const title = String((digest.info && digest.info.title) || '')
+    // The NUL separator stops a keyword from matching across a text boundary.
+    hay = [title, ...digest.texts, ...(digest.atexts || [])].join('\u0000').toLowerCase()
+    hayCache.set(digest, hay)
+  }
+  return hay
+}
+
 function sessionDigest(s) {
   loadIndex()
   const hit = textCache.get(s.dir)
@@ -846,18 +868,17 @@ export function apply(ctx, config = {}) {
             if (cutoff && (s.mtime || 0) < cutoff) continue
             scanned++
             const digest = sessionDigest(s)
+
+            // Match against the cached haystack first: this is the hot path and it
+            // must not touch the individual messages until a session actually hits.
+            const hay = haystackOf(digest)
+            if (!kws.every(k => hay.includes(k))) continue
+
             const pairs = [
               ...digest.texts.map(t => ['user', t]),
               ...(digest.atexts || []).map(t => ['assistant', t]),
             ]
-
-            // Session matches when EVERY keyword appears in at least one message.
             const lower = pairs.map(([role, t]) => [role, t, t.toLowerCase()])
-            // Titles are indexed implicitly by matching them here: a session named
-            // "EDA 桥接" should be findable without repeating that phrase in prose.
-            const titleLt = String(digest.info.title || '').toLowerCase()
-            const matchedAll = kws.every(k => titleLt.includes(k) || lower.some(([, , lt]) => lt.includes(k)))
-            if (!matchedAll) continue
 
             // Prefer messages that contains all keywords, then any.
             const all3 = lower.filter(([, , lt]) => kws.every(k => lt.includes(k)))
