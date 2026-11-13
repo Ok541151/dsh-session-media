@@ -275,6 +275,43 @@ function textOf(e) {
 }
 
 /**
+ * Mask values that look like credentials before anything is written to the index.
+ *
+ * Tool arguments are the one place in a transcript where a token, password or
+ * cookie is likely to appear verbatim, and the index file is plain JSON on disk.
+ * Only the value is replaced; the key stays so the call is still searchable.
+ */
+const SECRET_KV = /((?:token|password|passwd|secret|api[_-]?key|apikey|authorization|cookie|_authToken)["']?\s*[:=]\s*["']?)([^\s"',;}\]]{3,})/gi
+const SECRET_BARE = /\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})\b/g
+
+function redactSecrets(s) {
+  return String(s).replace(SECRET_KV, '$1***').replace(SECRET_BARE, (m) => m.slice(0, 6) + '***')
+}
+
+/**
+ * Tool calls are otherwise invisible to search — a file path, a shell command or
+ * a URL often appears only in the arguments, never in prose. Each call becomes a
+ * short searchable line: the tool name plus a redacted, truncated argument
+ * string. Truncation keeps the index from growing with raw JSON.
+ */
+function toolCallsOf(e) {
+  const m = e && e.data && e.data.message
+  if (!m || !Array.isArray(m.content)) return ''
+  const out = []
+  for (const p of m.content) {
+    if (!p || p.type !== 'tool-call') continue
+    const name = p.name || '(tool)'
+    let args = p.arguments
+    if (args == null) args = ''
+    if (typeof args !== 'string') {
+      try { args = JSON.stringify(args) } catch { args = '' }
+    }
+    out.push('[工具 ' + name + ' ' + redactSecrets(args).slice(0, 160) + ']')
+  }
+  return out.join('\n')
+}
+
+/**
  * Describe the attachments carried by a message as searchable text.
  *
  * Images were previously invisible to search: `session_search` indexes text, so
@@ -559,7 +596,7 @@ function loadIndex() {
   indexStarted = true
   try {
     const raw = JSON.parse(readFileSync(indexPath(), 'utf8'))
-    if (raw && raw.version === 4 && raw.entries) {
+    if (raw && raw.version === 5 && raw.entries) {
       for (const [dir, v] of Object.entries(raw.entries)) {
         if (v && typeof v.mtime === 'number' && typeof v.size === 'number' && Array.isArray(v.texts)) {
           if (typeof v.chars !== 'number') v.chars = entryChars(v)
@@ -612,7 +649,7 @@ function saveIndex(dirs) {
     }
     const file = indexPath()
     mkdirSync(path.dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify({ version: 4, entries, counters: Object.fromEntries(useCounters) }))
+    writeFileSync(file, JSON.stringify({ version: 5, entries, counters: Object.fromEntries(useCounters) }))
     indexDirty = false
     lastSaved = now
   } catch {
@@ -643,13 +680,15 @@ function sessionDigest(s) {
           const t = textOf(e)
           if (t && isNoise(t)) continue
           const label = mediaLabel(e.data && e.data.content)
-          if (label || t) texts.push((label ? label + ' ' : '') + t)
+          if (label || t) texts.push((label ? label + ' ' : '') + redactSecrets(t))
         } else if (e.type === 'assistant/message') {
           // Assistant text is indexed too, otherwise the reasoning behind a
           // decision is unsearchable and only recoverable by reading a whole
           // (often enormous) transcript. Truncated to bound the index size.
           const t = textOf(e)
-          if (t && !isNoise(t)) atexts.push(t.length > 800 ? t.slice(0, 800) : t)
+          if (t && !isNoise(t)) atexts.push(redactSecrets(t.length > 800 ? t.slice(0, 800) : t))
+          const tc = toolCallsOf(e)
+          if (tc) atexts.push(tc)
         }
       }
     }
@@ -814,7 +853,10 @@ export function apply(ctx, config = {}) {
 
             // Session matches when EVERY keyword appears in at least one message.
             const lower = pairs.map(([role, t]) => [role, t, t.toLowerCase()])
-            const matchedAll = kws.every(k => lower.some(([, , lt]) => lt.includes(k)))
+            // Titles are indexed implicitly by matching them here: a session named
+            // "EDA 桥接" should be findable without repeating that phrase in prose.
+            const titleLt = String(digest.info.title || '').toLowerCase()
+            const matchedAll = kws.every(k => titleLt.includes(k) || lower.some(([, , lt]) => lt.includes(k)))
             if (!matchedAll) continue
 
             // Prefer messages that contains all keywords, then any.
@@ -1060,7 +1102,7 @@ export function apply(ctx, config = {}) {
             let bad = false
             try {
               const raw = JSON.parse(readFileSync(file, 'utf8'))
-              if (raw.version !== 4) bad = true
+              if (raw.version !== 5) bad = true
             } catch { bad = true }
             if (bad) {
               try { unlinkSync(file) } catch { /* already gone */ }
@@ -1083,7 +1125,7 @@ export function apply(ctx, config = {}) {
           try {
             const raw = JSON.parse(readFileSync(file, 'utf8'))
             version = raw.version ?? null
-            if (version !== 4) warnings.push(`索引版本 ${version} ≠ 期望 4：下次搜索会自动重建（约 12 秒）`)
+            if (version !== 5) warnings.push(`索引版本 ${version} ≠ 期望 4：下次搜索会自动重建（约 12 秒）`)
           } catch {
             if (exists) warnings.push('索引文件存在但无法解析：下次搜索会自动重建')
             else warnings.push('索引文件不存在：首次搜索会全量重建（约 12 秒）')
@@ -1166,7 +1208,7 @@ export function apply(ctx, config = {}) {
 
           return {
             ok: true,
-            index: { path: file, exists, sizeMB, version, expectedVersion: 4, entries, counters: useCounters.size },
+            index: { path: file, exists, sizeMB, version, expectedVersion: 5, entries, counters: useCounters.size },
             cache: { entries, maxEntries: cacheMaxEntries, chars: cacheChars, maxChars: cacheMaxChars, usagePercent: usage },
             span: { newest: newest ? iso(newest) : '', oldest: oldest ? iso(oldest) : '' },
             topUsed: counters,

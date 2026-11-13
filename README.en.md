@@ -38,10 +38,10 @@ Manual (same path as other local plugins):
 
 ## Limits
 
-- Keyword search only; no semantic retrieval.
+- Keyword search only, over user text, assistant text, the session title and tool-call arguments; no semantic retrieval.
 - Depends on the archive format (`session.v3/v4.jsonl.zstd`, multi-frame zstd). Unknown versions are skipped with a warning, not adapted.
 - Images are returned as paths; nothing is OCR'd.
-- No redaction. The index stores transcript text verbatim.
+- Credentials are masked before indexing (sk-/ghp_/npm_/AKIA prefixes and token=/password: forms). Best effort only — it is not a substitute for keeping secrets out of the workspace.
 
 ## Testing
 
