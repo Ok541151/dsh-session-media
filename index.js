@@ -936,11 +936,14 @@ export function apply(ctx, config = {}) {
         name: 'session_read',
         description: [
           '读取某一个历史会话的对话内容（用户与助手的消息）。',
-          '先调用 session_search 拿到会话 id，再用它读全文。',
-          '受 maxChars 限制，默认 12000 字符。',
+          '先调用 session_search 拿到会话 id，再用它读。',
+          '长会话请分页：返回里的 total / offset / hasMore 说明还有多少没读。',
+          '单条消息超过 2000 字会被截断；整体受 maxChars 字符上限约束。',
         ].join('\n'),
         parameters: {
           sessionId: { type: 'string', description: '会话 id（session_search 返回的 id，可只用前 8 位）。' },
+          offset: { type: 'number', description: '从第几条消息开始，默认 0。' },
+          limit: { type: 'number', description: '本次最多返回多少条消息，默认 200。' },
           maxChars: { type: 'number', description: '最多返回多少字符，默认 12000。' },
         },
         output: {
@@ -959,18 +962,47 @@ export function apply(ctx, config = {}) {
           try { events = readSession(hit.dir) } catch (e) { return { ok: false, error: String(e) } }
           if (!events) return { ok: false, error: '会话存档无法解析' }
           const info = summarize(events)
-          const messages = []
-          let used = 0
+
+          // Collect first, slice second: pagination needs the total to tell the
+          // caller how much is left, and a truncated read is otherwise
+          // indistinguishable from a short session.
+          const all = []
           for (const e of events) {
             if (e.type !== 'user/message' && e.type !== 'assistant/message') continue
             const t = textOf(e).trim()
             if (!t || isNoise(t)) continue
             const body = t.length > 2000 ? t.slice(0, 2000) + ' …(截断)' : t
-            if (used + body.length > maxChars) { messages.push({ role: 'system', text: '…(已达字符上限)' }); break }
-            used += body.length
-            messages.push({ role: e.type === 'user/message' ? 'user' : 'assistant', text: body })
+            all.push({ role: e.type === 'user/message' ? 'user' : 'assistant', text: body })
           }
-          return { ok: true, id: hit.id, date: iso(hit.mtime), title: info.title || '', messages }
+
+          const offset = Math.max(0, Math.floor(Number(args?.offset ?? 0)) || 0)
+          const limit = Math.max(1, Math.min(500, Math.floor(Number(args?.limit ?? 200)) || 200))
+          const page = all.slice(offset, offset + limit)
+
+          const messages = []
+          let used = 0
+          for (const m of page) {
+            if (used + m.text.length > maxChars) {
+              messages.push({ role: 'system', text: '…(已达字符上限，请减小 limit 或调整 offset)' })
+              break
+            }
+            used += m.text.length
+            messages.push(m)
+          }
+
+          const nextOffset = offset + messages.filter(m => m.role !== 'system').length
+          return {
+            ok: true,
+            id: hit.id,
+            date: iso(hit.mtime),
+            title: info.title || '',
+            total: all.length,
+            offset,
+            count: messages.length,
+            hasMore: nextOffset < all.length,
+            nextOffset: nextOffset < all.length ? nextOffset : null,
+            messages,
+          }
         },
       })
 
