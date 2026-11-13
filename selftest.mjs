@@ -1,5 +1,5 @@
 /**
- * dsh-memory 自检：逐项断言，PASS/FAIL 表格输出，退出码非 0 即失败。
+ * dsh-session-media 自检：逐项断言，PASS/FAIL 表格输出，退出码非 0 即失败。
  *
  * 用法：node selftest.mjs [--no-evict]
  *   --no-evict  跳过"反相关淘汰"一项（会临时改写索引，约 15 秒）
@@ -308,7 +308,7 @@ if (!SKIP_EVICT) {
 const width = (s) => [...s].reduce((a, c) => a + (c.charCodeAt(0) > 255 ? 2 : 1), 0)
 const pad = (s, n) => s + ' '.repeat(Math.max(0, n - width(s)))
 
-console.log('\n========== dsh-memory 自检 ==========')
+console.log('\n========== dsh-session-media 自检 ==========')
 console.log('='.repeat(72))
 for (const r of results) {
   console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${pad(r.name, 32)} ${r.detail}`)
