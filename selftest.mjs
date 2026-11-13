@@ -192,6 +192,80 @@ await check('命中累加 uses 并落盘', async () => {
 })
 
 // ---------------------------------------------------------------------------
+// --- capabilities added in 0.3.3: each one gets a guard, because all six shipped
+// --- without a regression test and five of them were only checked by hand.
+
+await check('匹配计数 matches 存在', async () => {
+  const r = await T('session_search').execute({ keyword: 'BUCK', limit: 1 })
+  assert(r.hits.length > 0, '零命中')
+  assert(typeof r.hits[0].matches === 'number' && r.hits[0].matches > 0, `matches=${r.hits[0].matches}`)
+  return `matches=${r.hits[0].matches}`
+})
+
+await check('片段以命中处为中心', async () => {
+  let total = 0, withKw = 0
+  for (const kw of ['BUCK', '纹波', '会话']) {
+    const r = await T('session_search').execute({ keyword: kw, limit: 3 })
+    for (const h of r.hits) {
+      for (const sn of h.snippets) {
+        total++
+        if (sn.text.toLowerCase().includes(kw.toLowerCase())) withKw++
+      }
+    }
+  }
+  assert(total > 0, '没有任何片段')
+  assert(withKw === total, `${total - withKw}/${total} 个片段不含关键词`)
+  return `${withKw}/${total} 片段含关键词`
+})
+
+await check('工具调用已被索引', async () => {
+  const j = JSON.parse(readFileSync(IDX, 'utf8'))
+  const sample = Object.values(j.entries)
+    .flatMap((e) => e.atexts || [])
+    .find((t) => t.startsWith('[工具 '))
+  assert(sample, '索引里没有任何工具标签')
+  const toolName = sample.slice(4).split(' ')[0]
+  const r = await T('session_search').execute({ keyword: toolName, limit: 2 })
+  assert(r.hits.length > 0, `按工具名 ${toolName} 搜不到`)
+  return `工具名 ${toolName} 可搜到`
+})
+
+await check('索引里没有泄露凭据', () => {
+  const raw = readFileSync(IDX, 'utf8')
+  const patterns = {
+    'sk-': /sk-[A-Za-z0-9]{16,}/,
+    ghp_: /ghp_[A-Za-z0-9]{20,}/,
+    'npm_': /npm_[A-Za-z0-9]{20,}/,
+    AKIA: /AKIA[0-9A-Z]{16}/,
+  }
+  for (const [name, re] of Object.entries(patterns)) {
+    const m = raw.match(re)
+    assert(!m, `${name} 泄露: ${m && m[0].slice(0, 16)}...`)
+  }
+  return '4 类前缀均未命中'
+})
+
+await check('session_read 支持分页', async () => {
+  const p1 = await T('session_read').execute({ sessionId: '69fd8e77', limit: 3 })
+  assert(typeof p1.total === 'number' && p1.total > 3, `total=${p1.total}`)
+  assert(p1.count <= 3, `count=${p1.count}`)
+  assert(p1.hasMore === true, 'hasMore 应为 true')
+  assert(p1.nextOffset === 3, `nextOffset=${p1.nextOffset}`)
+  const p2 = await T('session_read').execute({ sessionId: '69fd8e77', offset: p1.nextOffset, limit: 3 })
+  assert(p2.offset === 3, `第二页 offset=${p2.offset}`)
+  assert(JSON.stringify(p1.messages) !== JSON.stringify(p2.messages), '第二页与第一页内容相同')
+  return `total=${p1.total}，两页内容不同`
+})
+
+await check('重复搜索结果一致（haystack 缓存安全）', async () => {
+  const a = await T('session_search').execute({ keyword: 'BUCK', limit: 3 })
+  const b = await T('session_search').execute({ keyword: 'BUCK', limit: 3 })
+  const ka = a.hits.map((h) => h.id + ':' + h.matches).join(',')
+  const kb = b.hits.map((h) => h.id + ':' + h.matches).join(',')
+  assert(ka === kb, '两次搜索命中不一致')
+  return `${a.hits.length} 个会话，结果稳定`
+})
+
 if (!SKIP_EVICT) {
   await check('反相关数据下拒绝淘汰', async () => {
     const backup = IDX + '.selftest-bak'

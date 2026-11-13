@@ -7,7 +7,7 @@
 | Capability | Notes |
 |---|---|
 | **Auto memory** | One Markdown file per workspace, injected into the system prompt every turn. Edit the file, it takes effect next turn — no restart |
-| **History search** | Keyword search across every past session, both user and assistant text; space-separated keywords are AND; optional time window |
+| **History search** | Keyword search across every past session over user text, assistant text, the **session title** and **tool-call arguments** (commands, paths, URLs); space-separated keywords are AND; optional time window and workspace filter. Snippets are centred on the match |
 | **Attachment recovery** | List images/files carried by a session, return the original local path, copy them out in bulk |
 
 ## Relationship to existing plugins
@@ -22,7 +22,7 @@ Search here is a linear keyword scan (cold start ≈ 12 s). For fast retrieval u
 
 ## Tools
 
-`session_search` · `session_read` · `session_media` · `memory_doctor`, plus one prompt section `plugin:memory`.
+`session_search` (AND keywords, time window, workspace filter, `matches` count, attachment list) · `session_read` (paginated: `offset`/`limit`, returns `total`/`hasMore`/`nextOffset`) · `session_media` (list, filter, bulk copy out) · `memory_doctor` (health, `fix`, staleness nudge), plus one prompt section `plugin:memory`.
 
 ## Install
 

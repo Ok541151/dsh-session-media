@@ -9,7 +9,7 @@
 | 能力 | 说明 |
 |---|---|
 | **自动记忆** | 每个工作区一份 Markdown，每轮注入系统提示。改文件下一轮就生效，不用重启 |
-| **历史检索** | 跨所有会话搜你和我**双方**说过的话，支持多关键词 AND 与时间范围 |
+| **历史检索** | 跨所有会话搜你和我**双方**的正文、**会话标题**和**工具调用参数**（命令、路径、URL），支持多关键词 AND、时间范围与工作区过滤。返回的片段以命中处为中心 |
 | **附件取出** | 列出某个会话里的图片/文档，给出本地原始路径，可批量导出 |
 
 ## 与已有插件的关系
@@ -22,14 +22,14 @@
 | `dsh-session-recall` | 会话检索（官方 `ctx.sessionQuery` + FTS5，毫秒级） | ❌ 不追 |
 | **本插件** | 附件检索 + 记忆自动注入 | ✅ 独占 |
 
-检索引擎是本插件最弱的一环（关键词线性扫描，冷启约 12 秒）。**如果你要的是高性能检索，装 `dsh-session-recall`；如果你要的是"把会话里的图捞出来"，用这个。**
+检索引擎是本插件最弱的一环（关键词线性扫描，冷启 15 秒左右，热查约 30 ms）。**如果你要的是高性能检索，装 `dsh-session-recall`；如果你要的是"把会话里的图捞出来"，用这个。**
 
 ## 工具
 
 | 工具 | 作用 |
 |---|---|
-| `session_search(keyword, limit?, sinceDays?)` | 跨会话检索。空格分隔多个词表示 AND |
-| `session_read(sessionId, maxChars?)` | 读某会话全文 |
+| `session_search(keyword, limit?, sinceDays?, workspace?)` | 跨会话检索。空格分隔多个词表示 AND；返回 `matches`（命中消息数）与该会话附件清单 |
+| `session_read(sessionId, offset?, limit?, maxChars?)` | 读会话，**支持分页**：返回 `total` / `hasMore` / `nextOffset`。单条超 2000 字会截断 |
 | `session_media(sessionId?, kind?, sinceDays?, limit?, extractTo?)` | 列出附件；`extractTo` 可复制原始文件到目录 |
 | `memory_doctor(top?, fix?)` | 体检：索引版本/条数/体积/高频会话/附件统计/告警；`fix` 可清理并重建 |
 
