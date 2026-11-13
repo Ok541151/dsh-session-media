@@ -868,7 +868,7 @@ export function apply(ctx, config = {}) {
         },
         output: {
           schema: { type: 'json' },
-          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v, null, 2) }],
+          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
         },
         async execute(args) {
           // Space-separated keywords are AND: every one must appear somewhere in
@@ -913,7 +913,7 @@ export function apply(ctx, config = {}) {
             // at index time), so "where is that screenshot" is one call, not two.
             const attachments = [...new Set(
               pairs.flatMap(([, t]) => (t.match(/\[(?:图片|文件) [^\]]+\]/g) || [])),
-            )].slice(0, 8)
+            )].slice(0, 5)
 
             // A real hit is a real use: this session is now the newest.
             promote(s.dir)
@@ -948,7 +948,7 @@ export function apply(ctx, config = {}) {
         },
         output: {
           schema: { type: 'json' },
-          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v, null, 2) }],
+          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
         },
         async execute(args) {
           const target = String(args?.sessionId ?? '')
@@ -1022,7 +1022,7 @@ export function apply(ctx, config = {}) {
         },
         output: {
           schema: { type: 'json' },
-          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v, null, 2) }],
+          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
         },
         async execute(args) {
           const limit = Number(args?.limit ?? 50)
@@ -1148,15 +1148,15 @@ export function apply(ctx, config = {}) {
           '排查"搜不到""索引是不是坏了""是不是快淘汰了"时先跑它。只读，不修改任何东西。',
         ].join('\n'),
         parameters: {
-          top: { type: 'number', description: '列出前 N 个高频会话，默认 5。' },
+          top: { type: 'number', description: '列出前 N 个高频会话，默认 3。' },
           fix: { type: 'boolean', description: '尝试修复：清理孤儿计数、删除损坏/过期的索引（下次搜索重建）。' },
         },
         output: {
           schema: { type: 'json' },
-          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v, null, 2) }],
+          render: (_a, v) => [{ type: 'text', text: JSON.stringify(v) }],
         },
         async execute(args) {
-          const topN = Math.max(1, Math.min(50, Number(args?.top ?? 5)))
+          const topN = Math.max(1, Math.min(50, Number(args?.top ?? 3)))
           const warnings = []
           const file = indexPath()
           const repaired = []
