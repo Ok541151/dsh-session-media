@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-media",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Session-archive layer for DeepSeek Harness: per-workspace memory injection, cross-session keyword search, and attachment recovery (original blob paths, bulk export).",
   "type": "module",
   "main": "./index.js",

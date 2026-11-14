@@ -29,7 +29,7 @@
 | 工具 | 作用 |
 |---|---|
 | `session_search(keyword, limit?, sinceDays?, workspace?)` | 跨会话检索。空格分隔多个词表示 AND；返回 `matches`（命中消息数）与该会话附件清单 |
-| `session_read(sessionId, offset?, limit?, maxChars?)` | 读会话，**支持分页**：返回 `total` / `hasMore` / `nextOffset`。单条超 2000 字会截断 |
+| `session_read(sessionId, offset?, limit?, maxChars?, around?, span?, msgChars?)` | 读会话，**支持分页**（`total`/`hasMore`/`nextOffset`）与**跳到命中位置**（`around` = session_search 返回的 `at`，`span` 前后各几条）。单条消息默认截断 2000 字，`around` 模式默认 16000 |
 | `session_media(sessionId?, kind?, sinceDays?, limit?, extractTo?)` | 列出附件；`extractTo` 可复制原始文件到目录 |
 | `memory_doctor(top?, fix?)` | 体检：索引版本/条数/体积/高频会话/附件统计/告警；`fix` 可清理并重建 |
 

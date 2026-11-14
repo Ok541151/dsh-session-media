@@ -112,10 +112,10 @@ await check('memory_doctor 无告警', async () => {
   return `v${r.index.version}, ${r.index.entries} 条, ${r.index.sizeMB} MB`
 })
 
-await check('索引存在且版本为 5（含 counters）', () => {
+await check('索引存在且版本为 6（含 counters）', () => {
   assert(existsSync(IDX), '索引不存在')
   const j = JSON.parse(readFileSync(IDX, 'utf8'))
-  assert(j.version === 5, `version=${j.version}`)
+  assert(j.version === 6, `version=${j.version}`)
   assert(j.entries && typeof j.entries === 'object', '缺 entries')
   assert(j.counters && typeof j.counters === 'object', '缺 counters')
   return `${Object.keys(j.entries).length} 条 / ${Object.keys(j.counters).length} 计数器`
@@ -266,6 +266,27 @@ await check('重复搜索结果一致（haystack 缓存安全）', async () => {
   return `${a.hits.length} 个会话，结果稳定`
 })
 
+await check('搜索命中带消息序号 at', async () => {
+  const r = await T('session_search').execute({ keyword: 'Vfd', limit: 2 })
+  assert(r.hits.length > 0, '零命中')
+  const sn = r.hits[0].snippets.find((x) => typeof x.at === 'number')
+  assert(sn, '片段里没有 at 字段')
+  assert(sn.at >= 0, `at=${sn.at}（应为非负整数）`)
+  return `at=${sn.at}`
+})
+
+await check('around 能把命中读回来', async () => {
+  const r = await T('session_search').execute({ keyword: 'Vfd', limit: 1 })
+  const sn = r.hits[0].snippets.find((x) => typeof x.at === 'number' && x.at >= 0)
+  assert(sn, '没有可用的 at')
+  const page = await T('session_read').execute({ sessionId: r.hits[0].id, around: sn.at, span: 2 })
+  assert(page.around === sn.at, `回显 around=${page.around}`)
+  assert(page.span === 2, `span=${page.span}`)
+  const joined = page.messages.map((m) => m.text).join(' ').toLowerCase()
+  assert(joined.includes('vfd'), '读回来的窗口里没有命中内容')
+  return `at=${sn.at}，窗口 ${page.count} 条`
+})
+
 if (!SKIP_EVICT) {
   await check('反相关数据下拒绝淘汰', async () => {
     const backup = IDX + '.selftest-bak'
@@ -281,7 +302,7 @@ if (!SKIP_EVICT) {
         e.lastUsed = e.mtime
         out[k] = e
       })
-      writeFileSync(IDX, JSON.stringify({ version: 5, entries: out, counters: {} }))
+      writeFileSync(IDX, JSON.stringify({ version: 6, entries: out, counters: {} }))
 
       // Module state is process-wide, so the crafted index is only seen after a reset.
       m.__testReset()

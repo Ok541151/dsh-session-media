@@ -596,7 +596,7 @@ function loadIndex() {
   indexStarted = true
   try {
     const raw = JSON.parse(readFileSync(indexPath(), 'utf8'))
-    if (raw && raw.version === 5 && raw.entries) {
+    if (raw && raw.version === 6 && raw.entries) {
       for (const [dir, v] of Object.entries(raw.entries)) {
         if (v && typeof v.mtime === 'number' && typeof v.size === 'number' && Array.isArray(v.texts)) {
           if (typeof v.chars !== 'number') v.chars = entryChars(v)
@@ -649,7 +649,7 @@ function saveIndex(dirs) {
     }
     const file = indexPath()
     mkdirSync(path.dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify({ version: 5, entries, counters: Object.fromEntries(useCounters) }))
+    writeFileSync(file, JSON.stringify({ version: 6, entries, counters: Object.fromEntries(useCounters) }))
     indexDirty = false
     lastSaved = now
   } catch {
@@ -714,6 +714,12 @@ function sessionDigest(s) {
 
   const texts = []
   const atexts = []
+  // Ordinal of each entry inside the message list that session_read builds, so a
+  // search hit can point at the exact position instead of only naming the session.
+  // Only messages that survive session_read's filters advance the counter.
+  const textOrders = []
+  const aorders = []
+  let ord = 0
   let info = { title: null, createdAt: null, users: 0, assistants: 0 }
   try {
     const events = readSession(s.dir)
@@ -724,15 +730,28 @@ function sessionDigest(s) {
           const t = textOf(e)
           if (t && isNoise(t)) continue
           const label = mediaLabel(e.data && e.data.content)
-          if (label || t) texts.push((label ? label + ' ' : '') + redactSecrets(t))
+          if (label || t) {
+            texts.push((label ? label + ' ' : '') + redactSecrets(t))
+            textOrders.push(t ? ord : -1)
+            if (t) ord++
+          }
         } else if (e.type === 'assistant/message') {
           // Assistant text is indexed too, otherwise the reasoning behind a
           // decision is unsearchable and only recoverable by reading a whole
           // (often enormous) transcript. Truncated to bound the index size.
           const t = textOf(e)
-          if (t && !isNoise(t)) atexts.push(redactSecrets(t.length > 800 ? t.slice(0, 800) : t))
-          const tc = toolCallsOf(e)
-          if (tc) atexts.push(tc)
+          if (t && !isNoise(t)) {
+            atexts.push(redactSecrets(t.length > 800 ? t.slice(0, 800) : t))
+            aorders.push(ord)
+            ord++
+            const tc = toolCallsOf(e)
+            if (tc) { atexts.push(tc); aorders.push(ord - 1) }   // same message, same ordinal
+          } else {
+            // A message carrying only tool calls has no text, but session_read
+            // still shows it (as a tool line), so it owns an ordinal too.
+            const tc = toolCallsOf(e)
+            if (tc) { atexts.push(tc); aorders.push(ord); ord++ }
+          }
         }
       }
     }
@@ -742,7 +761,7 @@ function sessionDigest(s) {
 
   const counter = useCounters.get(s.dir) || { uses: 0, lastUsed: s.mtime }
   useCounters.set(s.dir, counter)
-  const entry = { mtime: s.mtime, size: s.size, texts, atexts, info, chars: 0, uses: counter.uses, lastUsed: counter.lastUsed }
+  const entry = { mtime: s.mtime, size: s.size, texts, atexts, textOrders, aorders, info, chars: 0, uses: counter.uses, lastUsed: counter.lastUsed }
   entry.chars = entryChars(entry)
 
   // Replace a stale entry: subtract its weight before re-adding.
@@ -896,18 +915,21 @@ export function apply(ctx, config = {}) {
             const hay = haystackOf(digest)
             if (!kws.every(k => hay.includes(k))) continue
 
+            const tOrd = digest.textOrders || []
+            const aOrd = digest.aorders || []
             const pairs = [
-              ...digest.texts.map(t => ['user', t]),
-              ...(digest.atexts || []).map(t => ['assistant', t]),
+              ...digest.texts.map((t, i) => ['user', t, tOrd[i] ?? -1]),
+              ...(digest.atexts || []).map((t, i) => ['assistant', t, aOrd[i] ?? -1]),
             ]
-            const lower = pairs.map(([role, t]) => [role, t, t.toLowerCase()])
+            const lower = pairs.map(([role, t, at]) => [role, t, t.toLowerCase(), at])
 
             // Prefer messages that contains all keywords, then any.
             const all3 = lower.filter(([, , lt]) => kws.every(k => lt.includes(k)))
             const any3 = lower.filter(([, , lt]) => kws.some(k => lt.includes(k)))
             const want = all3.length ? all3 : any3
             const snippets = want.slice(0, 3)
-              .map(([role, t]) => ({ role, text: snippetAround(t, kws) }))
+              // lower 是 4 元组 [role, text, lowerText, at]，第 3 位要跳过
+              .map(([role, t, , at]) => ({ role, at, text: snippetAround(t, kws) }))
 
             // Surface the attachments carried by this session (labels were inlined
             // at index time), so "where is that screenshot" is one call, not two.
@@ -945,6 +967,9 @@ export function apply(ctx, config = {}) {
           offset: { type: 'number', description: '从第几条消息开始，默认 0。' },
           limit: { type: 'number', description: '本次最多返回多少条消息，默认 200。' },
           maxChars: { type: 'number', description: '最多返回多少字符，默认 12000。' },
+          around: { type: 'number', description: '跳到第 N 条消息附近（session_search 返回的 at 字段）。给了它就忽略 offset。' },
+          span: { type: 'number', description: 'around 前后各取几条，默认 3。' },
+          msgChars: { type: 'number', description: '单条消息最多取多少字符。默认 2000；用 around 定位时默认 16000，否则命中所在的超长消息会被截掉。' },
         },
         output: {
           schema: { type: 'json' },
@@ -966,18 +991,47 @@ export function apply(ctx, config = {}) {
           // Collect first, slice second: pagination needs the total to tell the
           // caller how much is left, and a truncated read is otherwise
           // indistinguishable from a short session.
+          // A hit can sit deep inside a very long message (a checkpoint summary is
+          // 10k+ characters), so reads positioned by `around` keep far more of it.
+          const capArg = Number(args?.msgChars)
+          const msgChars = Number.isFinite(capArg) && capArg > 0
+            ? Math.min(50000, Math.floor(capArg))
+            : (Number.isFinite(Number(args?.around)) ? 16000 : 2000)
+
           const all = []
           for (const e of events) {
             if (e.type !== 'user/message' && e.type !== 'assistant/message') continue
+            const role = e.type === 'user/message' ? 'user' : 'assistant'
             const t = textOf(e).trim()
-            if (!t || isNoise(t)) continue
-            const body = t.length > 2000 ? t.slice(0, 2000) + ' …(截断)' : t
-            all.push({ role: e.type === 'user/message' ? 'user' : 'assistant', text: body })
+            const usable = t && !isNoise(t)
+            // A tool call belongs to the same message: keeping it here means one
+            // ordinal per message on both sides, and an argument the search hit on
+            // is actually visible when the caller reads around that ordinal.
+            const tc = e.type === 'assistant/message' ? toolCallsOf(e) : ''
+            if (!usable && !tc) continue
+            const cap = msgChars
+            const head = usable ? (t.length > cap ? t.slice(0, cap) + ' …(截断)' : t) : ''
+            const body = tc ? (head ? head + '\n' + tc : tc) : head
+            all.push({ role, text: body })
           }
 
-          const offset = Math.max(0, Math.floor(Number(args?.offset ?? 0)) || 0)
-          const limit = Math.max(1, Math.min(500, Math.floor(Number(args?.limit ?? 200)) || 200))
-          const page = all.slice(offset, offset + limit)
+          const aroundRaw = Number(args?.around)
+          const hasAround = Number.isFinite(aroundRaw) && aroundRaw >= 0
+          const span = Math.max(0, Math.min(20, Math.floor(Number(args?.span ?? 3)) || 3))
+
+          let offset, limit, page
+          if (hasAround) {
+            // Jump straight to the hit instead of paging from the start: a large
+            // session can hold 1000 messages and the answer sits wherever it sits.
+            const at = Math.floor(aroundRaw)
+            offset = Math.max(0, at - span)
+            limit = Math.min(all.length, at + span + 1) - offset
+            page = all.slice(offset, offset + limit)
+          } else {
+            offset = Math.max(0, Math.floor(Number(args?.offset ?? 0)) || 0)
+            limit = Math.max(1, Math.min(500, Math.floor(Number(args?.limit ?? 200)) || 200))
+            page = all.slice(offset, offset + limit)
+          }
 
           const messages = []
           let used = 0
@@ -998,6 +1052,8 @@ export function apply(ctx, config = {}) {
             title: info.title || '',
             total: all.length,
             offset,
+            around: hasAround ? Math.floor(aroundRaw) : null,
+            span: hasAround ? span : null,
             count: messages.length,
             hasMore: nextOffset < all.length,
             nextOffset: nextOffset < all.length ? nextOffset : null,
@@ -1178,7 +1234,7 @@ export function apply(ctx, config = {}) {
             let bad = false
             try {
               const raw = JSON.parse(readFileSync(file, 'utf8'))
-              if (raw.version !== 5) bad = true
+              if (raw.version !== 6) bad = true
             } catch { bad = true }
             if (bad) {
               try { unlinkSync(file) } catch { /* already gone */ }
@@ -1201,7 +1257,7 @@ export function apply(ctx, config = {}) {
           try {
             const raw = JSON.parse(readFileSync(file, 'utf8'))
             version = raw.version ?? null
-            if (version !== 5) warnings.push(`索引版本 ${version} ≠ 期望 4：下次搜索会自动重建（约 12 秒）`)
+            if (version !== 6) warnings.push(`索引版本 ${version} ≠ 期望 4：下次搜索会自动重建（约 12 秒）`)
           } catch {
             if (exists) warnings.push('索引文件存在但无法解析：下次搜索会自动重建')
             else warnings.push('索引文件不存在：首次搜索会全量重建（约 12 秒）')
@@ -1284,7 +1340,7 @@ export function apply(ctx, config = {}) {
 
           return {
             ok: true,
-            index: { path: file, exists, sizeMB, version, expectedVersion: 5, entries, counters: useCounters.size },
+            index: { path: file, exists, sizeMB, version, expectedVersion: 6, entries, counters: useCounters.size },
             cache: { entries, maxEntries: cacheMaxEntries, chars: cacheChars, maxChars: cacheMaxChars, usagePercent: usage },
             span: { newest: newest ? iso(newest) : '', oldest: oldest ? iso(oldest) : '' },
             topUsed: counters,

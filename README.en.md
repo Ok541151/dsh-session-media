@@ -22,7 +22,7 @@ Search here is a linear keyword scan (cold start ≈ 12 s). For fast retrieval u
 
 ## Tools
 
-`session_search` (AND keywords, time window, workspace filter, `matches` count, attachment list) · `session_read` (paginated: `offset`/`limit`, returns `total`/`hasMore`/`nextOffset`) · `session_media` (list, filter, bulk copy out) · `memory_doctor` (health, `fix`, staleness nudge), plus one prompt section `plugin:memory`.
+`session_search` (AND keywords, time window, workspace filter, `matches` count, attachment list) · `session_read` (paginated: `offset`/`limit`, returns `total`/`hasMore`/`nextOffset`; or `around` + `span` to jump straight to a hit reported by `at`) · `session_media` (list, filter, bulk copy out) · `memory_doctor` (health, `fix`, staleness nudge), plus one prompt section `plugin:memory`.
 
 ## Install
 
