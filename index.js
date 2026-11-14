@@ -690,6 +690,29 @@ function snippetAround(text, keywords, width = 200) {
   return (start > 0 ? '…' : '') + body + (end < text.length ? '…' : '')
 }
 
+/**
+ * Clip an over-long message around `focus` instead of from its head.
+ *
+ * A checkpoint summary runs to 10k+ characters, and the keyword that made the
+ * caller come here is usually not in the first 2000 of them — reading the head
+ * returned ~5.5k tokens of text that did not contain the answer at all.
+ */
+function clipAround(text, cap, focus) {
+  if (text.length <= cap) return text
+  const f = focus ? text.toLowerCase().indexOf(String(focus).toLowerCase()) : -1
+  if (f < 0) return text.slice(0, cap) + ' …(截断)'
+  // Keep the head as well as the hit window: clipping purely around the keyword
+  // dropped an answer that sat elsewhere in the same message.
+  const head = Math.min(600, Math.max(0, f))
+  const rest = Math.max(400, cap - head)
+  const start = Math.max(head, f - Math.floor(rest / 3))
+  const end = Math.min(text.length, start + rest)
+  return text.slice(0, head)
+    + (start > head ? '…' : '')
+    + text.slice(start, end)
+    + (end < text.length ? ' …(截断)' : '')
+}
+
 function haystackOf(digest) {
   let hay = hayCache.get(digest)
   if (hay === undefined) {
@@ -969,7 +992,8 @@ export function apply(ctx, config = {}) {
           maxChars: { type: 'number', description: '最多返回多少字符，默认 12000。' },
           around: { type: 'number', description: '跳到第 N 条消息附近（session_search 返回的 at 字段）。给了它就忽略 offset。' },
           span: { type: 'number', description: 'around 前后各取几条，默认 3。' },
-          msgChars: { type: 'number', description: '单条消息最多取多少字符。默认 2000；用 around 定位时默认 16000，否则命中所在的超长消息会被截掉。' },
+          msgChars: { type: 'number', description: '单条消息最多取多少字符。默认 2000；用 around 定位时默认 16000。' },
+          focus: { type: 'string', description: '配合 around：超长消息只保留 focus 附近 msgChars 字符，而不是取开头。' },
         },
         output: {
           schema: { type: 'json' },
@@ -993,10 +1017,11 @@ export function apply(ctx, config = {}) {
           // indistinguishable from a short session.
           // A hit can sit deep inside a very long message (a checkpoint summary is
           // 10k+ characters), so reads positioned by `around` keep far more of it.
+          const focusText = String(args?.focus ?? '').trim()
           const capArg = Number(args?.msgChars)
           const msgChars = Number.isFinite(capArg) && capArg > 0
             ? Math.min(50000, Math.floor(capArg))
-            : (Number.isFinite(Number(args?.around)) ? 16000 : 2000)
+            : (focusText ? 2000 : (Number.isFinite(Number(args?.around)) ? 16000 : 2000))
 
           const all = []
           for (const e of events) {
@@ -1010,7 +1035,7 @@ export function apply(ctx, config = {}) {
             const tc = e.type === 'assistant/message' ? toolCallsOf(e) : ''
             if (!usable && !tc) continue
             const cap = msgChars
-            const head = usable ? (t.length > cap ? t.slice(0, cap) + ' …(截断)' : t) : ''
+            const head = usable ? clipAround(t, cap, focusText) : ''
             const body = tc ? (head ? head + '\n' + tc : tc) : head
             all.push({ role, text: body })
           }

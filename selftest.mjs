@@ -287,6 +287,20 @@ await check('around 能把命中读回来', async () => {
   return `at=${sn.at}，窗口 ${page.count} 条`
 })
 
+await check('focus 能压掉超长消息', async () => {
+  const r = await T('session_search').execute({ keyword: 'Vfd', limit: 1 })
+  const sn = r.hits[0].snippets.find((x) => typeof x.at === 'number' && x.at >= 0)
+  assert(sn, '没有可用的 at')
+  const wide = await T('session_read').execute({ sessionId: r.hits[0].id, around: sn.at, span: 2 })
+  const tight = await T('session_read').execute({ sessionId: r.hits[0].id, around: sn.at, span: 2, focus: 'Vfd' })
+  const wideLen = JSON.stringify(wide).length
+  const tightLen = JSON.stringify(tight).length
+  assert(tightLen < wideLen, `focus 没变小: ${tightLen} vs ${wideLen}`)
+  const joined = tight.messages.map((m) => m.text).join(' ').toLowerCase()
+  assert(joined.includes('vfd'), 'focus 模式把命中内容切掉了')
+  return `${wideLen} → ${tightLen} 字符（命中仍在）`
+})
+
 if (!SKIP_EVICT) {
   await check('反相关数据下拒绝淘汰', async () => {
     const backup = IDX + '.selftest-bak'
