@@ -998,7 +998,7 @@ export function apply(ctx, config = {}) {
             // Surface the attachments carried by this session (labels were inlined
             // at index time), so "where is that screenshot" is one call, not two.
             const attachments = [...new Set(
-              pairs.flatMap(([, t]) => (t.match(/\[(?:图片|文件) [^\]]+\]/g) || [])),
+              pairs.flatMap(([, t]) => (t.match(/\[(?:图片|文件) [^\]]*#[0-9a-f]{8}\]/g) || [])),
             )].slice(0, 5)
 
             // A real hit is a real use: this session is now the newest.
@@ -1202,41 +1202,69 @@ export function apply(ctx, config = {}) {
             const cutoff = days > 0 ? Date.now() - days * 86400000 : 0
             const kindFilter = String(args?.kind ?? '').toLowerCase()
             const outDir = String(args?.extractTo ?? '')
-            const seenKey = new Set()
-            const found = []
+
+            // Collect per relevance level across every matched session, then pick
+            // the best level that produced anything. Deciding per session let a
+            // fallback session flood a result that already had precise hits.
+            const tiers = { message: [], any: [], session: [] }
             let matched = 0
+            const labelRe = /\[(?:图片|文件) [^\]]*#[0-9a-f]{8}\]/g
+
             for (const s of all) {
-              if (found.length >= limit) break
               if (s.unknownFormat) continue
               if (cutoff && (s.mtime || 0) < cutoff) continue
               const digest = sessionDigest(s)
               if (!kws.every((k) => haystackOf(digest).includes(k))) continue
               matched++
-              const labels = new Set()
+              const title = digest.info.title || s.id.slice(0, 8)
+              const date = iso(s.mtime)
               for (const t of [...digest.texts, ...(digest.atexts || [])]) {
-                for (const m of t.matchAll(/\[(?:图片|文件) [^\]]+\]/g)) labels.add(m[0])
+                const low = t.toLowerCase()
+                const labels = [...t.matchAll(labelRe)].map((m) => m[0])
+                if (!labels.length) continue
+                const allKw = kws.every((k) => low.includes(k))
+                const anyKw = kws.some((k) => low.includes(k))
+                for (const l of labels) {
+                  const rec = { session: title, date, label: l }
+                  if (allKw) tiers.message.push(rec)
+                  else if (anyKw) tiers.any.push(rec)
+                  else tiers.session.push(rec)
+                }
               }
-              for (const label of labels) {
-                const meta = parseMediaLabel(label)
-                if (!meta || !meta.name) continue
-                if (kindFilter && meta.kind !== kindFilter) continue
-                const key = meta.hash8 || (s.dir + meta.name)
-                if (seenKey.has(key)) continue
-                seenKey.add(key)
-                const file = meta.hash8 ? blobByPrefix(meta.hash8, [blobDir, path.join(path.dirname(blobDir), 'files')], meta.name) : ''
-                found.push({
-                  session: digest.info.title || s.id.slice(0, 8),
-                  date: iso(s.mtime),
-                  name: meta.name,
-                  kind: meta.kind,
-                  bytes: meta.kb * 1024,
-                  hash: meta.hash8,
-                  path: file,
-                  exists: !!file,
-                })
-                if (found.length >= limit) break
-              }
+              if (!digest.texts.some((t) => labelRe.test(t))) labelRe.lastIndex = 0
             }
+
+            const chosen = tiers.message.length ? tiers.message
+              : (tiers.any.length ? tiers.any : tiers.session)
+            const relevance = tiers.message.length ? 'message'
+              : (tiers.any.length ? 'message-any' : 'session')
+
+            const seenKey = new Set()
+            const found = []
+            for (const rec of chosen) {
+              if (found.length >= limit) break
+              const meta = parseMediaLabel(rec.label)
+              if (!meta || !meta.name) continue
+              if (kindFilter && meta.kind !== kindFilter) continue
+              const key = meta.hash8 || (rec.session + meta.name)
+              if (seenKey.has(key)) continue
+              seenKey.add(key)
+              const file = meta.hash8
+                ? blobByPrefix(meta.hash8, [blobDir, path.join(path.dirname(blobDir), 'files')], meta.name)
+                : ''
+              found.push({
+                session: rec.session,
+                date: rec.date,
+                name: meta.name,
+                kind: meta.kind,
+                bytes: meta.kb * 1024,
+                hash: meta.hash8,
+                path: file,
+                exists: !!file,
+                relevance,
+              })
+            }
+
             if (outDir) {
               try { mkdirSync(outDir, { recursive: true }) } catch (e) { return { ok: false, error: '无法创建导出目录: ' + String(e) } }
               let n = 0
