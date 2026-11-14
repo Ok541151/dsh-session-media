@@ -713,6 +713,47 @@ function clipAround(text, cap, focus) {
     + (end < text.length ? ' …(截断)' : '')
 }
 
+/**
+ * Parse an indexed attachment label: `[图片 name.png 100KB #425026b9]`.
+ * The 8-hex prefix is enough to locate the blob by reading one shard directory,
+ * which avoids decompressing the session archive just to list its attachments.
+ */
+function parseMediaLabel(label) {
+  const m = /^\[(图片|文件) ([\s\S]*?)(?: (\d+)KB)?(?: #([0-9a-f]{8}))?\]$/.exec(label)
+  if (!m) return null
+  return { kind: m[1] === '图片' ? 'image' : 'file', name: m[2], kb: m[3] ? Number(m[3]) : 0, hash8: m[4] || '' }
+}
+
+/**
+ * Resolve `<hash8>…` to a stored file by scanning its two-character shard.
+ *
+ * The harness keeps two stores: images as a single file under
+ * `attachments/v1/objects/<xx>/<hash>`, and documents as a directory under
+ * `attachments/v1/files/<xx>/<hash>/<original name>`. Checking only the first
+ * made every PDF report `exists: false`.
+ */
+function blobByPrefix(hash8, roots, name) {
+  if (!hash8 || hash8.length < 4) return ''
+  for (const root of roots) {
+    const shard = path.join(root, hash8.slice(0, 2))
+    let entries
+    try { entries = readdirSync(shard) } catch { continue }
+    for (const entry of entries) {
+      if (!entry.startsWith(hash8)) continue
+      const p = path.join(shard, entry)
+      let isDir = false
+      try { isDir = statSync(p).isDirectory() } catch { continue }
+      if (!isDir) return p
+      if (name && existsSync(path.join(p, name))) return path.join(p, name)
+      try {
+        const inner = readdirSync(p).find((n) => existsSync(path.join(p, n)))
+        if (inner) return path.join(p, inner)
+      } catch { /* ignore */ }
+    }
+  }
+  return ''
+}
+
 function haystackOf(digest) {
   let hay = hayCache.get(digest)
   if (hay === undefined) {
@@ -1096,6 +1137,7 @@ export function apply(ctx, config = {}) {
         ].join('\n'),
         parameters: {
           sessionId: { type: 'string', description: '会话 id（可只用前 8 位）；省略则概览最近会话。' },
+          query: { type: 'string', description: '按主题找附件：空格分隔多个词表示 AND，扫所有命中该主题的会话并列出它们的附件。给了它就忽略 sessionId。' },
           limit: { type: 'number', description: '最多返回多少条附件，默认 50。' },
           kind: { type: 'string', description: "只列某一类：'image' 或 'file'；省略为全部。" },
           sinceDays: { type: 'number', description: '只看最近 N 天的附件；0 或省略表示不限。' },
@@ -1151,6 +1193,63 @@ export function apply(ctx, config = {}) {
           }
 
           const all = listSessions()
+          // Topic mode: "where are all the pictures about X". Works off the labels
+          // already in the index, so it never decompresses an archive.
+          const query = String(args?.query ?? '').trim()
+          if (query) {
+            const kws = query.toLowerCase().split(/\s+/).filter(Boolean)
+            const days = Number(args?.sinceDays ?? 0)
+            const cutoff = days > 0 ? Date.now() - days * 86400000 : 0
+            const kindFilter = String(args?.kind ?? '').toLowerCase()
+            const outDir = String(args?.extractTo ?? '')
+            const seenKey = new Set()
+            const found = []
+            let matched = 0
+            for (const s of all) {
+              if (found.length >= limit) break
+              if (s.unknownFormat) continue
+              if (cutoff && (s.mtime || 0) < cutoff) continue
+              const digest = sessionDigest(s)
+              if (!kws.every((k) => haystackOf(digest).includes(k))) continue
+              matched++
+              const labels = new Set()
+              for (const t of [...digest.texts, ...(digest.atexts || [])]) {
+                for (const m of t.matchAll(/\[(?:图片|文件) [^\]]+\]/g)) labels.add(m[0])
+              }
+              for (const label of labels) {
+                const meta = parseMediaLabel(label)
+                if (!meta || !meta.name) continue
+                if (kindFilter && meta.kind !== kindFilter) continue
+                const key = meta.hash8 || (s.dir + meta.name)
+                if (seenKey.has(key)) continue
+                seenKey.add(key)
+                const file = meta.hash8 ? blobByPrefix(meta.hash8, [blobDir, path.join(path.dirname(blobDir), 'files')], meta.name) : ''
+                found.push({
+                  session: digest.info.title || s.id.slice(0, 8),
+                  date: iso(s.mtime),
+                  name: meta.name,
+                  kind: meta.kind,
+                  bytes: meta.kb * 1024,
+                  hash: meta.hash8,
+                  path: file,
+                  exists: !!file,
+                })
+                if (found.length >= limit) break
+              }
+            }
+            if (outDir) {
+              try { mkdirSync(outDir, { recursive: true }) } catch (e) { return { ok: false, error: '无法创建导出目录: ' + String(e) } }
+              let n = 0
+              for (const it of found) {
+                if (!it.exists) continue
+                const day = String(it.date || '').slice(0, 10).replace(/-/g, '') || 'unknown'
+                const safe = String(it.name || 'file').replace(/[\\/:*?"<>|]/g, '_')
+                const dst = path.join(outDir, day + '_' + String(++n).padStart(2, '0') + '_' + safe)
+                try { copyFileSync(it.path, dst); it.extracted = dst } catch { it.extracted = '' }
+              }
+            }
+            return { ok: true, query, sessionsMatched: matched, count: found.length, items: found }
+          }
           if (!target) {
             const out = []
             for (const s of all) {

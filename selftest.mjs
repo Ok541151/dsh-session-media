@@ -6,9 +6,10 @@
  *
  * 可以原样当作发布时的冒烟测试：不依赖测试框架。
  */
-import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync, readdirSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import os from 'node:os'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SRC = path.join(HERE, 'index.js')
@@ -299,6 +300,30 @@ await check('focus 能压掉超长消息', async () => {
   const joined = tight.messages.map((m) => m.text).join(' ').toLowerCase()
   assert(joined.includes('vfd'), 'focus 模式把命中内容切掉了')
   return `${wideLen} → ${tightLen} 字符（命中仍在）`
+})
+
+await check('按主题找附件（query）', async () => {
+  const r = await T('session_media').execute({ query: 'BUCK', limit: 6 })
+  assert(r.ok, 'ok=false')
+  assert(r.sessionsMatched > 0, '没有命中会话')
+  assert(r.items.length > 0, '没有附件')
+  const resolved = r.items.filter((i) => i.exists).length
+  assert(resolved > 0, '所有附件路径都解析失败')
+  return `${r.sessionsMatched} 个会话 / ${r.items.length} 个附件 / ${resolved} 个可定位`
+})
+
+await check('按主题导出到目录', async () => {
+  const out = path.join(os.tmpdir(), 'dsh-media-selftest-' + Date.now())
+  try {
+    const r = await T('session_media').execute({ query: 'BUCK', kind: 'image', limit: 2, extractTo: out })
+    const copied = r.items.filter((i) => i.extracted).length
+    assert(copied > 0, '没有导出任何文件')
+    const onDisk = readdirSync(out).length
+    assert(onDisk === copied, `目录里 ${onDisk} 个，回报 ${copied} 个`)
+    return `${copied} 个文件已写入磁盘`
+  } finally {
+    try { rmSync(out, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
 })
 
 if (!SKIP_EVICT) {

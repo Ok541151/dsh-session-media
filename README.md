@@ -10,7 +10,7 @@
 |---|---|
 | **自动记忆** | 每个工作区一份 Markdown，每轮注入系统提示。改文件下一轮就生效，不用重启 |
 | **历史检索** | 跨所有会话搜你和我**双方**的正文、**会话标题**和**工具调用参数**（命令、路径、URL），支持多关键词 AND、时间范围与工作区过滤。返回的片段以命中处为中心 |
-| **附件取出** | 列出某个会话里的图片/文档，给出本地原始路径，可批量导出 |
+| **附件取出** | 按会话或**按主题**找历史附件，给出本地原始路径，可批量导出。主题模式列出命中会话的**全部**附件 |
 
 ## 与已有插件的关系
 
@@ -30,7 +30,7 @@
 |---|---|
 | `session_search(keyword, limit?, sinceDays?, workspace?)` | 跨会话检索。空格分隔多个词表示 AND；返回 `matches`（命中消息数）与该会话附件清单 |
 | `session_read(sessionId, offset?, limit?, maxChars?, around?, span?, msgChars?)` | 读会话，**支持分页**（`total`/`hasMore`/`nextOffset`）与**跳到命中位置**（`around` = session_search 返回的 `at`，`span` 前后各几条）。单条消息默认截断 2000 字，`around` 模式默认 16000 |
-| `session_media(sessionId?, kind?, sinceDays?, limit?, extractTo?)` | 列出附件；`extractTo` 可复制原始文件到目录 |
+| `session_media(sessionId?, query?, kind?, sinceDays?, limit?, extractTo?)` | 列出附件；`query` 可**按主题**跨会话找（"跟 BUCK 有关的图都在哪"）；`extractTo` 复制原始文件到目录 |
 | `memory_doctor(top?, fix?)` | 体检：索引版本/条数/体积/高频会话/附件统计/告警；`fix` 可清理并重建 |
 
 外加一个系统提示段 `plugin:memory`（order 210）。
